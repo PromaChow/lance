@@ -1,44 +1,72 @@
 name: Run notebook
-
 on:
   push:
     branches:
       - main
-  pull_request:
-    paths:
-      - python/**
-      - rust/**
-      - protos/**
-      - notebooks/**
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref
+    }}
 jobs:
   linux:
-    timeout-minutes: 30
-    runs-on: "ubuntu-22.04"
+    runs-on: ubuntu-22.04
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        lfs: true
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.10"
-    - uses: ./.github/workflows/build_linux_wheel
-      with:
-        python-minor-version: "10"
-    - name: Pip install
-      working-directory: python
-      shell: bash
-      run: |
-        pip3 install jupyter duckdb>=0.7
-        pip3 install $(ls target/wheels/*.whl)
-    - name: Run python tests
-      shell: bash
-      working-directory: notebooks
-      run: |
-        jupyter nbconvert --to notebook --execute quickstart.ipynb
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - uses: ./.github/workflows/build_linux_wheel
+        with:
+          python-minor-version: '10'
+      - name: Pip install
+        run: 'pip3 install jupyter duckdb>=0.7
+
+          pip3 install $(ls target/wheels/*.whl)
+
+          '
+        shell: bash
+        working-directory: python
+      - id: measurement-5
+        name: Record Measurement After Pip install
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Pip install
+          task: get-measurement
+      - name: Run python tests
+        run: 'jupyter nbconvert --to notebook --execute quickstart.ipynb
+
+          '
+        shell: bash
+        working-directory: notebooks
+      - id: measurement-7
+        name: Record Measurement After Run python tests
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run python tests
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 30

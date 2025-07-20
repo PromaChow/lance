@@ -1,39 +1,75 @@
 name: Run benchmarks
-
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   dataset:
-    timeout-minutes: 30
-    runs-on: "ubuntu-22.04"
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - uses: ./.github/workflows/build_linux_wheel
+        with:
+          python-minor-version: '10'
+      - name: Pip install
+        run: 'pip install $(ls target/wheels/*.whl)
+
+          pip install pandas
+
+          '
+        working-directory: python
+      - id: measurement-5
+        name: Record Measurement After Pip install
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Pip install
+          task: get-measurement
+      - name: Run test
+        run: './test_dataset.sh
+
+          '
+        working-directory: benchmarks/${{ matrix.dataset }}
+      - id: measurement-7
+        name: Record Measurement After Run test
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run test
+          task: get-measurement
+      - name: Archive results
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.dataset }}-results
+          path: benchmarks/${{ matrix.dataset }}/benchmark.csv
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
     strategy:
       matrix:
-        dataset: ["sift"]
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        lfs: true
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.10"
-    - uses: ./.github/workflows/build_linux_wheel
-      with:
-        python-minor-version: "10"
-    - name: Pip install
-      working-directory: python
-      run: |
-        pip install $(ls target/wheels/*.whl)
-        pip install pandas
-    - name: Run test
-      working-directory: benchmarks/${{ matrix.dataset }}
-      run: |
-        ./test_dataset.sh
-    - name: Archive results
-      uses: actions/upload-artifact@v3
-      with:
-        name: ${{ matrix.dataset }}-results
-        path: |
-          benchmarks/${{ matrix.dataset }}/benchmark.csv
+        dataset:
+          - sift
+    timeout-minutes: 30

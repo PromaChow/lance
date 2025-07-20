@@ -1,13 +1,33 @@
 name: Typo checker
-on: [pull_request]
+on:
+  push:
+    branches:
+      - main
 
 jobs:
   run:
     name: Spell Check with Typos
-    runs-on: "ubuntu-24.04"
+    runs-on: ubuntu-24.04
     steps:
-    - name: Checkout Actions Repository
-      uses: actions/checkout@v4
-
-    - name: Check spelling of the entire repository
-      uses: crate-ci/typos@v1.26.0
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - name: Checkout Actions Repository
+        uses: actions/checkout@v4
+      - name: Check spelling of the entire repository
+        uses: crate-ci/typos@v1.26.0
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json

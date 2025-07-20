@@ -1,149 +1,214 @@
 name: Build and upload python wheels
-
 on:
-  release:
-    types: [published]
+  push:
+    branches:
+      - main
 
 jobs:
   linux:
-    timeout-minutes: 60
-    name: Python Linux 3.${{ matrix.python-minor-version }} ${{ matrix.config.platform }} manylinux${{ matrix.config.manylinux }}
-    strategy:
-      matrix:
-        python-minor-version: [ "9" ]
-        config:
-          - platform: x86_64
-            manylinux: "2_17"
-            extra_args: ""
-            runner: ubuntu-22.04
-          - platform: x86_64
-            manylinux: "2_28"
-            extra_args: "--features fp16kernels"
-            runner: ubuntu-22.04
-          - platform: aarch64
-            manylinux: "2_17"
-            extra_args: ""
-            runner: ubuntu-2404-4x-arm64
-          - platform: aarch64
-            manylinux: "2_28"
-            extra_args: "--features fp16kernels"
-            runner: ubuntu-2404-4x-arm64
+    name: Python Linux 3.${{ matrix.python-minor-version }} ${{ matrix.config.platform
+      }} manylinux${{ matrix.config.manylinux }}
     runs-on: ${{ matrix.config.runner }}
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        lfs: true
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.${{ matrix.python-minor-version }}
-    - name: Handle tag
-      id: handle_tag
-      run: |
-        # If the tag ends with -beta.N, we need to call setup_version.py 
-        # and export repo as "fury" instead of "pypi"
-        if [[ ${{ github.ref }} == refs/tags/*-beta.* ]]; then
-          TAG=$(echo ${{ github.ref }} | sed 's/refs\/tags\///')
-          pip install packaging
-          python ci/setup_version.py $TAG
-          echo "repo=fury" >> $GITHUB_OUTPUT
-        else
-          echo "repo=pypi" >> $GITHUB_OUTPUT
-        fi
-    - uses: ./.github/workflows/build_linux_wheel
-      with:
-        python-minor-version: ${{ matrix.python-minor-version }}
-        args: "--release --strip ${{ matrix.config.extra_args }}"
-        arm-build: ${{ matrix.config.platform == 'aarch64' }}
-        manylinux: ${{ matrix.config.manylinux }}
-    - uses: ./.github/workflows/upload_wheel
-      with:
-        pypi_token: ${{ secrets.PYPI_TOKEN }}
-        fury_token: ${{ secrets.FURY_TOKEN }}
-        repo: ${{ steps.handle_tag.outputs.repo }}
-  mac:
-    timeout-minutes: 60
-    runs-on: ${{ matrix.config.runner }}
-    strategy:
-      matrix:
-        python-minor-version: ["9"]
-        config:
-          - target: x86_64-apple-darwin
-            runner: macos-13
-          - target: aarch64-apple-darwin
-            runner: macos-14
-    env:
-      MACOSX_DEPLOYMENT_TARGET: 10.15
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: ${{ inputs.ref }}
-        fetch-depth: 0
-        lfs: true
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.12
-    - name: Handle tag
-      id: handle_tag
-      run: |
-        # If the tag ends with -beta.N, we need to call setup_version.py 
-        # and export repo as "fury" instead of "pypi"
-        if [[ ${{ github.ref }} == refs/tags/*-beta.* ]]; then
-          TAG=$(echo ${{ github.ref }} | sed 's/refs\/tags\///')
-          pip install packaging
-          python ci/setup_version.py $TAG
-          echo "repo=fury" >> $GITHUB_OUTPUT
-        else
-          echo "repo=pypi" >> $GITHUB_OUTPUT
-        fi
-    - uses: ./.github/workflows/build_mac_wheel
-      with:
-        python-minor-version: ${{ matrix.python-minor-version }}
-        args: "--release --strip --target ${{ matrix.config.target }} --features fp16kernels"
-    - uses: ./.github/workflows/upload_wheel
-      with:
-        pypi_token: ${{ secrets.PYPI_TOKEN }}
-        fury_token: ${{ secrets.FURY_TOKEN }}
-        repo: ${{ steps.handle_tag.outputs.repo }}
-  windows:
-    timeout-minutes: 60
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        python-minor-version: ["9"]
-    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
           fetch-depth: 0
           lfs: true
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: 3.${{ matrix.python-minor-version }}
-      - name: Handle tag
-        id: handle_tag
+      - id: handle_tag
+        name: Handle tag
+        run: "# If the tag ends with -beta.N, we need to call setup_version.py \n\
+          # and export repo as \"fury\" instead of \"pypi\"\nif [[ ${{ github.ref\
+          \ }} == refs/tags/*-beta.* ]]; then\n  TAG=$(echo ${{ github.ref }} | sed\
+          \ 's/refs\\/tags\\///')\n  pip install packaging\n  python ci/setup_version.py\
+          \ $TAG\n  echo \"repo=fury\" >> $GITHUB_OUTPUT\nelse\n  echo \"repo=pypi\"\
+          \ >> $GITHUB_OUTPUT\nfi\n"
+      - id: measurement-4
+        name: Record Measurement After Handle tag
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Handle tag
+          task: get-measurement
+      - uses: ./.github/workflows/build_linux_wheel
+        with:
+          args: --release --strip ${{ matrix.config.extra_args }}
+          arm-build: ${{ matrix.config.platform == 'aarch64' }}
+          manylinux: ${{ matrix.config.manylinux }}
+          python-minor-version: ${{ matrix.python-minor-version }}
+      - uses: ./.github/workflows/upload_wheel
+        with:
+          fury_token: ${{ secrets.FURY_TOKEN }}
+          pypi_token: ${{ secrets.PYPI_TOKEN }}
+          repo: ${{ steps.handle_tag.outputs.repo }}
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    strategy:
+      matrix:
+        config:
+          - extra_args: ''
+            manylinux: '2_17'
+            platform: x86_64
+            runner: ubuntu-22.04
+          - extra_args: --features fp16kernels
+            manylinux: '2_28'
+            platform: x86_64
+            runner: ubuntu-22.04
+          - extra_args: ''
+            manylinux: '2_17'
+            platform: aarch64
+            runner: ubuntu-2404-4x-arm64
+          - extra_args: --features fp16kernels
+            manylinux: '2_28'
+            platform: aarch64
+            runner: ubuntu-2404-4x-arm64
+        python-minor-version:
+          - '9'
+    timeout-minutes: 60
+  mac:
+    env:
+      MACOSX_DEPLOYMENT_TARGET: 10.15
+    runs-on: ${{ matrix.config.runner }}
+    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+          ref: ${{ inputs.ref }}
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+      - id: handle_tag
+        name: Handle tag
+        run: "# If the tag ends with -beta.N, we need to call setup_version.py \n\
+          # and export repo as \"fury\" instead of \"pypi\"\nif [[ ${{ github.ref\
+          \ }} == refs/tags/*-beta.* ]]; then\n  TAG=$(echo ${{ github.ref }} | sed\
+          \ 's/refs\\/tags\\///')\n  pip install packaging\n  python ci/setup_version.py\
+          \ $TAG\n  echo \"repo=fury\" >> $GITHUB_OUTPUT\nelse\n  echo \"repo=pypi\"\
+          \ >> $GITHUB_OUTPUT\nfi\n"
+      - id: measurement-4
+        name: Record Measurement After Handle tag
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Handle tag
+          task: get-measurement
+      - uses: ./.github/workflows/build_mac_wheel
+        with:
+          args: --release --strip --target ${{ matrix.config.target }} --features
+            fp16kernels
+          python-minor-version: ${{ matrix.python-minor-version }}
+      - uses: ./.github/workflows/upload_wheel
+        with:
+          fury_token: ${{ secrets.FURY_TOKEN }}
+          pypi_token: ${{ secrets.PYPI_TOKEN }}
+          repo: ${{ steps.handle_tag.outputs.repo }}
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    strategy:
+      matrix:
+        config:
+          - runner: macos-13
+            target: x86_64-apple-darwin
+          - runner: macos-14
+            target: aarch64-apple-darwin
+        python-minor-version:
+          - '9'
+    timeout-minutes: 60
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+          ref: ${{ inputs.ref }}
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.${{ matrix.python-minor-version }}
+      - id: handle_tag
+        name: Handle tag
+        run: "# If the tag ends with -beta.N, we need to call setup_version.py \n\
+          # and export repo as \"fury\" instead of \"pypi\"\nif [[ ${{ github.ref\
+          \ }} == refs/tags/*-beta.* ]]; then\n  TAG=$(echo ${{ github.ref }} | sed\
+          \ 's/refs\\/tags\\///')\n  pip install packaging\n  python ci/setup_version.py\
+          \ $TAG\n  echo \"repo=fury\" >> $GITHUB_OUTPUT\nelse\n  echo \"repo=pypi\"\
+          \ >> $GITHUB_OUTPUT\nfi\n"
         shell: bash
-        run: |
-          # If the tag ends with -beta.N, we need to call setup_version.py 
-          # and export repo as "fury" instead of "pypi"
-          if [[ ${{ github.ref }} == refs/tags/*-beta.* ]]; then
-            TAG=$(echo ${{ github.ref }} | sed 's/refs\/tags\///')
-            pip install packaging
-            python ci/setup_version.py $TAG
-            echo "repo=fury" >> $GITHUB_OUTPUT
-          else
-            echo "repo=pypi" >> $GITHUB_OUTPUT
-          fi
+      - id: measurement-4
+        name: Record Measurement After Handle tag
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Handle tag
+          task: get-measurement
       - uses: ./.github/workflows/build_windows_wheel
         with:
+          args: --release --strip
           python-minor-version: ${{ matrix.python-minor-version }}
-          args: "--release --strip"
           vcpkg_token: ${{ secrets.VCPKG_GITHUB_PACKAGES }}
       - uses: ./.github/workflows/upload_wheel
         with:
-          pypi_token: ${{ secrets.PYPI_TOKEN }}
           fury_token: ${{ secrets.FURY_TOKEN }}
+          pypi_token: ${{ secrets.PYPI_TOKEN }}
           repo: ${{ steps.handle_tag.outputs.repo }}
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    strategy:
+      matrix:
+        python-minor-version:
+          - '9'
+    timeout-minutes: 60

@@ -3,262 +3,648 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    paths:
-      - rust/**
-      - protos/**
-      - .github/workflows/rust.yml
-      - Cargo.toml
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref
+    }}
 env:
-  # This env var is used by Swatinem/rust-cache@v2 for the cache
-  # key, so we set it to make sure it is always consistent.
+  CARGO_BUILD_JOBS: '1'
+  CARGO_INCREMENTAL: '0'
   CARGO_TERM_COLOR: always
-  # Disable full debug symbol generation to speed up CI build and keep memory down
-  # "1" means line tables only, which is useful for panic tracebacks.
-  RUSTFLAGS: "-C debuginfo=1"
-  RUST_BACKTRACE: "1"
-  # according to: https://matklad.github.io/2021/09/04/fast-rust-builds.html
-  # CI builds are faster with incremental disabled.
-  CARGO_INCREMENTAL: "0"
-  CARGO_BUILD_JOBS: "1"
-
+  RUSTFLAGS: -C debuginfo=1
+  RUST_BACKTRACE: '1'
 jobs:
-  format:
+  build-no-lock:
+    env:
+      CC: clang
+      CXX: clang++
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
         with:
-          components: rustfmt
-      - name: Check formatting
-        run: cargo fmt -- --check
+          json-output: true
+          task: start-measurement
+      - uses: easimon/maximize-build-space@v10
+        with:
+          remove-android: true
+          remove-codeql: true
+          remove-docker-images: true
+          remove-dotnet: true
+          remove-haskell: true
+      - uses: actions/checkout@v4
+      - name: Remove Cargo.lock
+        run: rm -f Cargo.lock
+      - id: measurement-4
+        name: Record Measurement After Remove Cargo.lock
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Remove Cargo.lock
+          task: get-measurement
+      - uses: rui314/setup-mold@v1
+      - name: Install dependencies
+        run: 'sudo apt update
+
+          sudo apt install -y protobuf-compiler libssl-dev
+
+          '
+      - id: measurement-7
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
+      - name: Build all
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
+          cargo build --benches --features ${ALL_FEATURES} --tests
+
+          '
+      - id: measurement-9
+        name: Record Measurement After Build all
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build all
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 30
+  cargo-deny:
+    name: Check Rust dependencies (cargo-deny)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          log-level: warn
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
   clippy:
     permissions:
       checks: write
     runs-on: ubuntu-24.04
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
-        run: |
-          sudo apt update
+        run: 'sudo apt update
+
           sudo apt install -y protobuf-compiler libssl-dev
+
+          '
+      - id: measurement-5
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
       - name: Get features
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
           echo "ALL_FEATURES=${ALL_FEATURES}" >> $GITHUB_ENV
+
+          '
+      - id: measurement-7
+        name: Record Measurement After Get features
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Get features
+          task: get-measurement
       - uses: auguwu/clippy-action@1.4.0
         with:
-          check-args: --locked --features ${{ env.ALL_FEATURES }} --tests --benches --examples
-          token: ${{secrets.GITHUB_TOKEN}}
+          check-args: --locked --features ${{ env.ALL_FEATURES }} --tests --benches
+            --examples
           deny: warnings
-  cargo-deny:
-    name: Check Rust dependencies (cargo-deny)
+          token: ${{secrets.GITHUB_TOKEN}}
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+  format:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
         with:
-          log-level: warn
-          command: check
-  linux-build:
-    runs-on: "ubuntu-24.04"
-    timeout-minutes: 60
-    strategy:
-      matrix:
-        toolchain:
-          - stable
-          - nightly
-    env:
-      # Need up-to-date compilers for kernels
-      CC: clang
-      CXX: clang++
-    steps:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
-      # pin the toolchain version to avoid surprises
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: ${{ matrix.toolchain }}
-          # When using the nightly toolchain, do not surface warnings as check annotations
-          matcher: ${{ matrix.toolchain != 'nightly'}}
-      - uses: rui314/setup-mold@v1
-      - uses: Swatinem/rust-cache@v2
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y protobuf-compiler libssl-dev
-          rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
-      - name: Start DynamodDB and S3
-        run: docker compose -f docker-compose.yml up -d --wait
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Run tests
-        if: ${{ matrix.toolchain == 'stable' }}
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
-          cargo llvm-cov  --locked --workspace --codecov --output-path coverage.codecov --features ${ALL_FEATURES}
-      - name: Build tests (nightly)
-        if: ${{ matrix.toolchain != 'stable' }}
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
-          cargo test --locked --features ${ALL_FEATURES} --workspace --no-run
-      - name: Run tests (nightly)
-        if: ${{ matrix.toolchain != 'stable' }}
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
-          cargo test --features ${ALL_FEATURES} --workspace
-      - name: Upload coverage to Codecov
-        if: ${{ matrix.toolchain == 'stable' }}
-        uses: codecov/codecov-action@v4
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt -- --check
+      - id: measurement-4
+        name: Record Measurement After Check formatting
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          codecov_yml_path: codecov.yml
-          files: coverage.codecov
-          flags: unittests
-          fail_ci_if_error: false
+          json-output: true
+          label: Check formatting
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 15
   linux-arm:
     runs-on: ubuntu-2404-4x-arm64
-    timeout-minutes: 75
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: "stable"
+          toolchain: stable
       - uses: rui314/setup-mold@v1
       - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
-        run: |
-          sudo apt -y -qq update
+        run: 'sudo apt -y -qq update
+
           sudo apt install -y protobuf-compiler libssl-dev pkg-config
+
+          '
+      - id: measurement-6
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
       - name: Build tests
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
           cargo test --locked --features ${ALL_FEATURES} --no-run
+
+          '
+      - id: measurement-8
+        name: Record Measurement After Build tests
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build tests
+          task: get-measurement
       - name: Start DynamodDB and S3
         run: docker compose -f docker-compose.yml up -d --wait
+      - id: measurement-10
+        name: Record Measurement After Start DynamodDB and S3
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Start DynamodDB and S3
+          task: get-measurement
       - name: Run tests
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
           cargo test --locked --features ${ALL_FEATURES}
-  build-no-lock:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+
+          '
+      - id: measurement-12
+        name: Record Measurement After Run tests
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run tests
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 75
+  linux-build:
     env:
-      # Need up-to-date compilers for kernels
       CC: clang
       CXX: clang++
+    runs-on: ubuntu-24.04
     steps:
-      # Remove not needed tools from runner
-      - uses: easimon/maximize-build-space@v10
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
         with:
-          remove-dotnet: true
-          remove-android: true
-          remove-haskell: true
-          remove-codeql: true
-          remove-docker-images: true
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
-      # Remote cargo.lock to force a fresh build
-      - name: Remove Cargo.lock
-        run: rm -f Cargo.lock
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          matcher: ${{ matrix.toolchain != 'nightly'}}
+          toolchain: ${{ matrix.toolchain }}
       - uses: rui314/setup-mold@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
-        run: |
-          sudo apt update
+        run: 'sudo apt update
+
           sudo apt install -y protobuf-compiler libssl-dev
-      - name: Build all
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
-          cargo build --benches --features ${ALL_FEATURES} --tests
-  mac-build:
-    runs-on: "macos-14"
-    timeout-minutes: 45
+
+          rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain
+          }}
+
+          '
+      - id: measurement-6
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
+      - name: Start DynamodDB and S3
+        run: docker compose -f docker-compose.yml up -d --wait
+      - id: measurement-8
+        name: Record Measurement After Start DynamodDB and S3
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Start DynamodDB and S3
+          task: get-measurement
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - if: ${{ matrix.toolchain == 'stable' }}
+        name: Run tests
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
+          cargo llvm-cov  --locked --workspace --codecov --output-path coverage.codecov
+          --features ${ALL_FEATURES}
+
+          '
+      - id: measurement-11
+        name: Record Measurement After Run tests
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run tests
+          task: get-measurement
+      - if: ${{ matrix.toolchain != 'stable' }}
+        name: Build tests (nightly)
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
+          cargo test --locked --features ${ALL_FEATURES} --workspace --no-run
+
+          '
+      - id: measurement-13
+        name: Record Measurement After Build tests (nightly)
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build tests (nightly)
+          task: get-measurement
+      - if: ${{ matrix.toolchain != 'stable' }}
+        name: Run tests (nightly)
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
+          cargo test --features ${ALL_FEATURES} --workspace
+
+          '
+      - id: measurement-15
+        name: Record Measurement After Run tests (nightly)
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run tests (nightly)
+          task: get-measurement
+      - if: ${{ matrix.toolchain == 'stable' }}
+        name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          codecov_yml_path: codecov.yml
+          fail_ci_if_error: false
+          files: coverage.codecov
+          flags: unittests
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
     strategy:
       matrix:
         toolchain:
           - stable
           - nightly
+    timeout-minutes: 60
+  mac-build:
     defaults:
       run:
         working-directory: ./rust
+    runs-on: macos-14
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - name: Select new xcode
-        # Default XCode right now is 15.0.1, which contains a bug that causes
-        # backtraces to not show properly. See:
-        # https://github.com/rust-lang/rust/issues/113783
         run: sudo xcode-select -s /Applications/Xcode_15.4.app
+      - id: measurement-4
+        name: Record Measurement After Select new xcode
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Select new xcode
+          task: get-measurement
       - name: Install dependencies
         run: brew install protobuf
+      - id: measurement-6
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
       - name: Set up Rust
-        run: |
-          rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+        run: 'rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain
+          }}
+
+          '
+      - id: measurement-8
+        name: Record Measurement After Set up Rust
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Set up Rust
+          task: get-measurement
       - name: Build tests
-        run: |
-          cargo test --locked --features fp16kernels,cli,tensorflow,dynamodb,substrait --no-run
+        run: 'cargo test --locked --features fp16kernels,cli,tensorflow,dynamodb,substrait
+          --no-run
+
+          '
+      - id: measurement-10
+        name: Record Measurement After Build tests
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build tests
+          task: get-measurement
       - name: Run tests
-        run: |
-          cargo test --features fp16kernels,cli,tensorflow,dynamodb,substrait
+        run: 'cargo test --features fp16kernels,cli,tensorflow,dynamodb,substrait
+
+          '
+      - id: measurement-12
+        name: Record Measurement After Run tests
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run tests
+          task: get-measurement
       - name: Check benchmarks
-        run: |
-          cargo check --benches --features fp16kernels,cli,tensorflow,dynamodb,substrait
-  windows-build:
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: rust
-    steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-      - name: Install Protoc v21.12
-        working-directory: C:\
-        run: |
-          New-Item -Path 'C:\protoc' -ItemType Directory
-          Set-Location C:\protoc
-          Invoke-WebRequest https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protoc-21.12-win64.zip -OutFile C:\protoc\protoc.zip
-          7z x protoc.zip
-          Add-Content $env:GITHUB_PATH "C:\protoc\bin"
-        shell: powershell
-      - name: Build tests
-        run: cargo test --locked --no-run
-      - name: Run tests
-        run: cargo test
-      - name: Check benchmarks
-        run: cargo check --benches
-  msrv:
-    # Check the minimum supported Rust version
-    name: MSRV Check - Rust v${{ matrix.msrv }}
-    runs-on: ubuntu-24.04
+        run: 'cargo check --benches --features fp16kernels,cli,tensorflow,dynamodb,substrait
+
+          '
+      - id: measurement-14
+        name: Record Measurement After Check benchmarks
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Check benchmarks
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
     strategy:
       matrix:
-        msrv: ["1.82.0"] # This should match up with rust-version in Cargo.toml
+        toolchain:
+          - stable
+          - nightly
+    timeout-minutes: 45
+  msrv:
     env:
-      # Need up-to-date compilers for kernels
       CC: clang
       CXX: clang++
+    name: MSRV Check - Rust v${{ matrix.msrv }}
+    runs-on: ubuntu-24.04
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
         with:
           submodules: true
       - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
-        run: |
-          sudo apt update
+        run: 'sudo apt update
+
           sudo apt install -y protobuf-compiler libssl-dev
+
+          '
+      - id: measurement-4
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
       - name: Install ${{ matrix.msrv }}
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.msrv }}
       - name: cargo +${{ matrix.msrv }} check
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
           cargo check --workspace --tests --benches --features ${ALL_FEATURES}
+
+          '
+      - id: measurement-7
+        name: Record Measurement After cargo +${{ matrix.msrv }} check
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: cargo +${{ matrix.msrv }} check
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    strategy:
+      matrix:
+        msrv:
+          - 1.82.0
+  windows-build:
+    defaults:
+      run:
+        working-directory: rust
+    runs-on: windows-latest
+    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Protoc v21.12
+        run: 'New-Item -Path ''C:\protoc'' -ItemType Directory
+
+          Set-Location C:\protoc
+
+          Invoke-WebRequest https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protoc-21.12-win64.zip
+          -OutFile C:\protoc\protoc.zip
+
+          7z x protoc.zip
+
+          Add-Content $env:GITHUB_PATH "C:\protoc\bin"
+
+          '
+        shell: powershell
+        working-directory: C:\
+      - id: measurement-4
+        name: Record Measurement After Install Protoc v21.12
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install Protoc v21.12
+          task: get-measurement
+      - name: Build tests
+        run: cargo test --locked --no-run
+      - id: measurement-6
+        name: Record Measurement After Build tests
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build tests
+          task: get-measurement
+      - name: Run tests
+        run: cargo test
+      - id: measurement-8
+        name: Record Measurement After Run tests
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run tests
+          task: get-measurement
+      - name: Check benchmarks
+        run: cargo check --benches
+      - id: measurement-10
+        name: Record Measurement After Check benchmarks
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Check benchmarks
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json

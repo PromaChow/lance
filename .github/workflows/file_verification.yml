@@ -1,64 +1,129 @@
 name: Lance File Write Read Round Trip Verification
-
-on: 
-  workflow_dispatch:
+on:
+  push:
+    branches:
+      - main
 
 jobs:
   run:
     runs-on: ubuntu-24.04
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install Build Requirements
-        run: |
-          sudo apt update
+        run: 'sudo apt update
+
           sudo apt install -y protobuf-compiler
 
+          '
+      - id: measurement-4
+        name: Record Measurement After Install Build Requirements
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install Build Requirements
+          task: get-measurement
       - name: Validate AWS Credentials
-        run: |
-          if [ -z "${{ secrets.LANCEDB_S3_READER_ACCESS_KEY }}" ] || [ -z "${{ secrets.LANCEDB_S3_READER_SECRET }}" ]; then
-            echo "ERROR: AWS credentials are not properly set"
-            exit 1
-          fi
-          echo "AWS credentials validation successful"
-
+        run: "if [ -z \"${{ secrets.LANCEDB_S3_READER_ACCESS_KEY }}\" ] || [ -z \"\
+          ${{ secrets.LANCEDB_S3_READER_SECRET }}\" ]; then\n  echo \"ERROR: AWS credentials\
+          \ are not properly set\"\n  exit 1\nfi\necho \"AWS credentials validation\
+          \ successful\"\n"
+      - id: measurement-6
+        name: Record Measurement After Validate AWS Credentials
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Validate AWS Credentials
+          task: get-measurement
       - name: Set up AWS CLI
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id: ${{ secrets.LANCEDB_S3_READER_ACCESS_KEY }}
-          aws-secret-access-key: ${{ secrets.LANCEDB_S3_READER_SECRET }}
           aws-region: us-east-2
-
+          aws-secret-access-key: ${{ secrets.LANCEDB_S3_READER_SECRET }}
       - name: Prepare Test Environment
-        run: |
-          BUCKET_NAME="lance-ci-bucket"
+        run: 'BUCKET_NAME="lance-ci-bucket"
+
           mkdir -p .github/workflows/file_veification/test_files
+
           aws s3 ls s3://$BUCKET_NAME
-          aws s3 cp s3://$BUCKET_NAME .github/workflows/file_verification/test_files --recursive
+
+          aws s3 cp s3://$BUCKET_NAME .github/workflows/file_verification/test_files
+          --recursive
+
           ls -l .github/workflows/file_verification/test_files
 
+          '
+      - id: measurement-9
+        name: Record Measurement After Prepare Test Environment
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Prepare Test Environment
+          task: get-measurement
       - name: Build Lance
-        working-directory: ./python
-        run: |
-          python -m venv venv
+        run: 'python -m venv venv
+
           source venv/bin/activate
+
           pip install pyarrow maturin
+
           maturin develop --release
 
+          '
+        working-directory: ./python
+      - id: measurement-11
+        name: Record Measurement After Build Lance
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build Lance
+          task: get-measurement
       - name: Test Lance File Write Read Round Trip
-        run: |
-          source python/venv/bin/activate
+        run: 'source python/venv/bin/activate
+
           cd .github/workflows/file_verification
+
           python test_write_read.py
 
-
+          '
+      - id: measurement-13
+        name: Record Measurement After Test Lance File Write Read Round Trip
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Test Lance File Write Read Round Trip
+          task: get-measurement
       - name: Cleanup
-        run: |
-          rm -rf .github/workflows/file_verification/test_files
-          echo "Cleanup completed: Test files removed"
+        run: 'rm -rf .github/workflows/file_verification/test_files
+
+          echo "Cleanup completed: Test files removed"'
+      - id: measurement-15
+        name: Record Measurement After Cleanup
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Cleanup
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json

@@ -1,71 +1,38 @@
 name: Build and Run Java JNI Tests
-
 on:
   push:
     branches:
       - main
-  pull_request:
-    paths:
-      - java/**
-      - rust/**
-      - .github/workflows/java.yml
 
 env:
-  # This env var is used by Swatinem/rust-cache@v2 for the cache
-  # key, so we set it to make sure it is always consistent.
+  CARGO_BUILD_JOBS: '1'
+  CARGO_INCREMENTAL: '0'
   CARGO_TERM_COLOR: always
-  # Disable full debug symbol generation to speed up CI build and keep memory down
-  # "1" means line tables only, which is useful for panic tracebacks.
-  RUSTFLAGS: "-C debuginfo=1"
-  RUST_BACKTRACE: "1"
-  # according to: https://matklad.github.io/2021/09/04/fast-rust-builds.html
-  # CI builds are faster with incremental disabled.
-  CARGO_INCREMENTAL: "0"
-  CARGO_BUILD_JOBS: "1"
-
+  RUSTFLAGS: -C debuginfo=1
+  RUST_BACKTRACE: '1'
 jobs:
-  rust-clippy-fmt:
-    runs-on: ubuntu-24.04
-    name: Rust Clippy and Fmt Check
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            lance
-            java/core/lance-jni -> ../target/rust-maven-plugin/lance-jni
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y protobuf-compiler libssl-dev
-      # pin the toolchain version to avoid surprises
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: clippy, rustfmt
-      - uses: rui314/setup-mold@v1
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Run cargo fmt
-        working-directory: java/core/lance-jni
-        run: cargo fmt --check
-      - name: Rust Clippy
-        working-directory: java/core/lance-jni
-        run: cargo clippy --all-targets -- -D warnings
-
   build-and-test-java:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    strategy:
-      matrix:
-        java-version: [8, 11, 17]
     name: Build and Test with Java ${{ matrix.java-version }}
+    runs-on: ubuntu-24.04
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - name: Install dependencies
-        run: |
-          sudo apt update
+        run: 'sudo apt update
+
           sudo apt install -y protobuf-compiler libssl-dev
-      # pin the toolchain version to avoid surprises
+
+          '
+      - id: measurement-2
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
@@ -80,14 +47,122 @@ jobs:
       - name: Set up Java ${{ matrix.java-version }}
         uses: actions/setup-java@v4
         with:
+          cache: maven
           distribution: temurin
           java-version: ${{ matrix.java-version }}
-          cache: "maven"
       - name: Running code style check with Java ${{ matrix.java-version }}
+        run: 'mvn spotless:check
+
+          '
         working-directory: java
-        run: |
-          mvn spotless:check
+      - id: measurement-10
+        name: Record Measurement After Running code style check with Java ${{ matrix.java-version
+          }}
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Running code style check with Java ${{ matrix.java-version }}
+          task: get-measurement
       - name: Running tests with Java ${{ matrix.java-version }}
+        run: 'mvn install
+
+          '
         working-directory: java
-        run: |
-          mvn install
+      - id: measurement-12
+        name: Record Measurement After Running tests with Java ${{ matrix.java-version
+          }}
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Running tests with Java ${{ matrix.java-version }}
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    strategy:
+      matrix:
+        java-version:
+          - 8
+          - 11
+          - 17
+    timeout-minutes: 60
+  rust-clippy-fmt:
+    name: Rust Clippy and Fmt Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'lance
+
+            java/core/lance-jni -> ../target/rust-maven-plugin/lance-jni
+
+            '
+      - name: Install dependencies
+        run: 'sudo apt update
+
+          sudo apt install -y protobuf-compiler libssl-dev
+
+          '
+      - id: measurement-4
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy, rustfmt
+      - uses: rui314/setup-mold@v1
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run cargo fmt
+        run: cargo fmt --check
+        working-directory: java/core/lance-jni
+      - id: measurement-9
+        name: Record Measurement After Run cargo fmt
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run cargo fmt
+          task: get-measurement
+      - name: Rust Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: java/core/lance-jni
+      - id: measurement-11
+        name: Record Measurement After Rust Clippy
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Rust Clippy
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json

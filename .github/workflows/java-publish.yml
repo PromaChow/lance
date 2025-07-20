@@ -1,33 +1,19 @@
 name: Build and publish Java packages
 on:
-  release:
-    # Use released instead of published, since we don't publish preview/beta
-    # versions
-    types: [released]
-  pull_request:
-    paths:
-      - .github/workflows/java-publish.yml
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: 'Release mode'
-        required: true
-        type: choice
-        default: dry_run
-        options:
-          - dry_run
-          - release
-      ref:
-        description: 'The branch, tag or SHA to checkout'
-        required: false
-        type: string
+  push:
+    branches:
+      - main
 
 jobs:
   linux-arm64:
     name: Build on Linux Arm64
     runs-on: ubuntu-2404-8x-arm64
-    timeout-minutes: 60
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -36,72 +22,67 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Check glibc version outside docker
         run: ldd --version
+      - id: measurement-4
+        name: Record Measurement After Check glibc version outside docker
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Check glibc version outside docker
+          task: get-measurement
       - name: Build and run in Debian 10 Arm64 container
-        run: |
-          docker run --platform linux/arm64 -v ${{ github.workspace }}:/workspace -w /workspace debian:10 bash -c "
-            
-            set -ex
-            apt-get update
-          
-            DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends --assume-yes \
-              apt-transport-https \
-              ca-certificates \
-              curl \
-              gpg \
-              bash \
-              less \
-              openssl \
-              libssl-dev \
-              pkg-config \
-              libsqlite3-dev \
-              libsqlite3-0 \
-              libreadline-dev \
-              git \
-              cmake \
-              dh-autoreconf \
-              clang \
-              g++ \
-              libc++-dev \
-              libc++abi-dev \
-              libprotobuf-dev \
-              libncurses5-dev \
-              libncursesw5-dev \
-              libudev-dev \
-              libhidapi-dev \
-              zip \
-              unzip
-            
-            # https://github.com/databendlabs/databend/issues/8035
-            PROTOC_ZIP=protoc-3.15.0-linux-aarch_64.zip
-            curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v3.15.0/\$PROTOC_ZIP
-            unzip -o \$PROTOC_ZIP -d /usr/local
-            rm -f \$PROTOC_ZIP
-            protoc --version
-          
-            curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable
-            source \$HOME/.cargo/env
-            cargo --version
-            
-            cd java/core/lance-jni
-            
-            # https://github.com/rustls/rustls/issues/1967
-            export CC=clang
-            export CXX=clang++
-            ldd --version
-
-            cargo build --release
-          "
+        run: "docker run --platform linux/arm64 -v ${{ github.workspace }}:/workspace\
+          \ -w /workspace debian:10 bash -c \"\n  \n  set -ex\n  apt-get update\n\n\
+          \  DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends\
+          \ --assume-yes \\\n    apt-transport-https \\\n    ca-certificates \\\n\
+          \    curl \\\n    gpg \\\n    bash \\\n    less \\\n    openssl \\\n   \
+          \ libssl-dev \\\n    pkg-config \\\n    libsqlite3-dev \\\n    libsqlite3-0\
+          \ \\\n    libreadline-dev \\\n    git \\\n    cmake \\\n    dh-autoreconf\
+          \ \\\n    clang \\\n    g++ \\\n    libc++-dev \\\n    libc++abi-dev \\\n\
+          \    libprotobuf-dev \\\n    libncurses5-dev \\\n    libncursesw5-dev \\\
+          \n    libudev-dev \\\n    libhidapi-dev \\\n    zip \\\n    unzip\n  \n\
+          \  # https://github.com/databendlabs/databend/issues/8035\n  PROTOC_ZIP=protoc-3.15.0-linux-aarch_64.zip\n\
+          \  curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v3.15.0/\\\
+          $PROTOC_ZIP\n  unzip -o \\$PROTOC_ZIP -d /usr/local\n  rm -f \\$PROTOC_ZIP\n\
+          \  protoc --version\n\n  curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain\
+          \ stable\n  source \\$HOME/.cargo/env\n  cargo --version\n  \n  cd java/core/lance-jni\n\
+          \  \n  # https://github.com/rustls/rustls/issues/1967\n  export CC=clang\n\
+          \  export CXX=clang++\n  ldd --version\n\n  cargo build --release\n\"\n"
+      - id: measurement-6
+        name: Record Measurement After Build and run in Debian 10 Arm64 container
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build and run in Debian 10 Arm64 container
+          task: get-measurement
       - uses: actions/upload-artifact@v4
         with:
+          if-no-files-found: error
           name: liblance_jni_linux_arm_64.zip
           path: java/core/lance-jni/target/release/liblance_jni.so
           retention-days: 1
-          if-no-files-found: error
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 60
   linux-x86:
     name: Build on Linux x86-64
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -110,75 +91,70 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Check glibc version outside docker
         run: ldd --version
+      - id: measurement-4
+        name: Record Measurement After Check glibc version outside docker
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Check glibc version outside docker
+          task: get-measurement
       - name: Build and run in Debian 10 X86-64 container
-        run: |
-          docker run --platform linux/amd64 -v ${{ github.workspace }}:/workspace -w /workspace debian:10 bash -c "
-          
-            set -ex
-            apt-get update
-          
-            DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends --assume-yes \
-              apt-transport-https \
-              ca-certificates \
-              curl \
-              gpg \
-              bash \
-              less \
-              openssl \
-              libssl-dev \
-              pkg-config \
-              libsqlite3-dev \
-              libsqlite3-0 \
-              libreadline-dev \
-              git \
-              cmake \
-              dh-autoreconf \
-              clang \
-              g++ \
-              libc++-dev \
-              libc++abi-dev \
-              libprotobuf-dev \
-              libncurses5-dev \
-              libncursesw5-dev \
-              libudev-dev \
-              libhidapi-dev \
-              zip \
-              unzip
-          
-            # https://github.com/databendlabs/databend/issues/8035
-            PROTOC_ZIP=protoc-3.15.0-linux-x86_64.zip
-            curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v3.15.0/\$PROTOC_ZIP
-            unzip -o \$PROTOC_ZIP -d /usr/local
-            rm -f \$PROTOC_ZIP
-            protoc --version
-          
-            curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable
-            source \$HOME/.cargo/env
-            cargo --version
-          
-            cd java/core/lance-jni
-          
-            # https://github.com/rustls/rustls/issues/1967
-            export CC=clang
-            export CXX=clang++
-            ldd --version
-
-            cargo build --release
-          "
+        run: "docker run --platform linux/amd64 -v ${{ github.workspace }}:/workspace\
+          \ -w /workspace debian:10 bash -c \"\n\n  set -ex\n  apt-get update\n\n\
+          \  DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends\
+          \ --assume-yes \\\n    apt-transport-https \\\n    ca-certificates \\\n\
+          \    curl \\\n    gpg \\\n    bash \\\n    less \\\n    openssl \\\n   \
+          \ libssl-dev \\\n    pkg-config \\\n    libsqlite3-dev \\\n    libsqlite3-0\
+          \ \\\n    libreadline-dev \\\n    git \\\n    cmake \\\n    dh-autoreconf\
+          \ \\\n    clang \\\n    g++ \\\n    libc++-dev \\\n    libc++abi-dev \\\n\
+          \    libprotobuf-dev \\\n    libncurses5-dev \\\n    libncursesw5-dev \\\
+          \n    libudev-dev \\\n    libhidapi-dev \\\n    zip \\\n    unzip\n\n  #\
+          \ https://github.com/databendlabs/databend/issues/8035\n  PROTOC_ZIP=protoc-3.15.0-linux-x86_64.zip\n\
+          \  curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v3.15.0/\\\
+          $PROTOC_ZIP\n  unzip -o \\$PROTOC_ZIP -d /usr/local\n  rm -f \\$PROTOC_ZIP\n\
+          \  protoc --version\n\n  curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain\
+          \ stable\n  source \\$HOME/.cargo/env\n  cargo --version\n\n  cd java/core/lance-jni\n\
+          \n  # https://github.com/rustls/rustls/issues/1967\n  export CC=clang\n\
+          \  export CXX=clang++\n  ldd --version\n\n  cargo build --release\n\"\n"
+      - id: measurement-6
+        name: Record Measurement After Build and run in Debian 10 X86-64 container
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build and run in Debian 10 X86-64 container
+          task: get-measurement
       - uses: actions/upload-artifact@v4
         with:
+          if-no-files-found: error
           name: liblance_jni_linux_x86_64.zip
           path: java/core/lance-jni/target/release/liblance_jni.so
           retention-days: 1
-          if-no-files-found: error
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 60
   macos-arm64:
     name: Build on MacOS Arm64 and release
-    runs-on: macos-14
-    timeout-minutes: 60
     needs:
       - linux-arm64
       - linux-x86
+    runs-on: macos-14
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -187,47 +163,114 @@ jobs:
       - name: Set up Java 8
         uses: actions/setup-java@v4
         with:
+          cache: maven
           distribution: corretto
-          java-version: 8
-          cache: "maven"
-          server-id: ossrh
-          server-username: SONATYPE_USER
-          server-password: SONATYPE_TOKEN
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          java-version: 8
+          server-id: ossrh
+          server-password: SONATYPE_TOKEN
+          server-username: SONATYPE_USER
       - uses: Homebrew/actions/setup-homebrew@master
       - name: Install dependencies
-        run: |
-          brew install protobuf
+        run: 'brew install protobuf
+
           brew install gpg
+
+          '
+      - id: measurement-6
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
       - name: Download artifact
         uses: actions/download-artifact@v4
       - name: Copy native libs
-        run: |
-          mkdir -p ./java/core/target/classes/nativelib/linux-x86-64 ./java/core/target/classes/nativelib/linux-aarch64
+        run: 'mkdir -p ./java/core/target/classes/nativelib/linux-x86-64 ./java/core/target/classes/nativelib/linux-aarch64
+
           cp ./liblance_jni_linux_x86_64.zip/liblance_jni.so ./java/core/target/classes/nativelib/linux-x86-64/liblance_jni.so
+
           cp ./liblance_jni_linux_arm_64.zip/liblance_jni.so ./java/core/target/classes/nativelib/linux-aarch64/liblance_jni.so
+
+          '
+      - id: measurement-9
+        name: Record Measurement After Copy native libs
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Copy native libs
+          task: get-measurement
       - name: Set github
-        run: |
-          git config --global user.email "Lance Github Runner"
+        run: 'git config --global user.email "Lance Github Runner"
+
           git config --global user.name "dev+gha@lancedb.com"
-      - name: Dry run
-        if: |
-          github.event_name == 'pull_request' ||
-          inputs.mode == 'dry_run'
+
+          '
+      - id: measurement-11
+        name: Record Measurement After Set github
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Set github
+          task: get-measurement
+      - if: 'github.event_name == ''pull_request'' ||
+
+          inputs.mode == ''dry_run''
+
+          '
+        name: Dry run
+        run: 'mvn --batch-mode -DskipTests -Drust.release.build=true package
+
+          '
         working-directory: java
-        run: |
-          mvn --batch-mode -DskipTests -Drust.release.build=true package
-      - name: Publish with Java 8
-        if: |
-          github.event_name == 'release' ||
-          inputs.mode == 'release'
-        working-directory: java
-        run: |
-          echo "use-agent" >> ~/.gnupg/gpg.conf
-          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
-          export GPG_TTY=$(tty)
-          mvn --batch-mode -DskipTests -Drust.release.build=true -DpushChanges=false -Dgpg.passphrase=${{ secrets.GPG_PASSPHRASE }} deploy -P deploy-to-ossrh -P shade-jar
-        env:
-          SONATYPE_USER: ${{ secrets.SONATYPE_USER }}
+      - id: measurement-13
+        name: Record Measurement After Dry run
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Dry run
+          task: get-measurement
+      - env:
           SONATYPE_TOKEN: ${{ secrets.SONATYPE_TOKEN }}
+          SONATYPE_USER: ${{ secrets.SONATYPE_USER }}
+        if: 'github.event_name == ''release'' ||
+
+          inputs.mode == ''release''
+
+          '
+        name: Publish with Java 8
+        run: 'echo "use-agent" >> ~/.gnupg/gpg.conf
+
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+
+          export GPG_TTY=$(tty)
+
+          mvn --batch-mode -DskipTests -Drust.release.build=true -DpushChanges=false
+          -Dgpg.passphrase=${{ secrets.GPG_PASSPHRASE }} deploy -P deploy-to-ossrh
+          -P shade-jar
+
+          '
+        working-directory: java
+      - id: measurement-15
+        name: Record Measurement After Publish with Java 8
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Publish with Java 8
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 60

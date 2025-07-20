@@ -1,53 +1,34 @@
 name: Python
-
 on:
   push:
     branches:
       - main
-  pull_request:
-    paths:
-      - Cargo.*
-      - python/**
-      - rust/**
-      - protos/**
-      - .github/workflows/python.yml
-      - .github/workflows/build_linux_wheel/**
-      - .github/workflows/build_mac_wheel/**
-      - .github/workflows/run_tests/**
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref
+    }}
 env:
-  # This env var is used by Swatinem/rust-cache@v2 for the cache
-  # key, so we set it to make sure it is always consistent.
+  CACHE_PREFIX: '1'
   CARGO_TERM_COLOR: always
-  # Disable full debug symbol generation to speed up CI build and keep memory down
-  # "1" means line tables only, which is useful for panic tracebacks.
-  RUSTFLAGS: "-C debuginfo=line-tables-only"
-  RUST_BACKTRACE: "1"
-  CI: "true"
-  # Color output for pytest is off by default.
-  PYTEST_ADDOPTS: "--color=yes"
-  FORCE_COLOR: "1"
-  # Change this to bust all caches (may be needed periodically if the caches accumulate
-  # a lot of cruft).
-  CACHE_PREFIX: "1"
-
+  CI: 'true'
+  FORCE_COLOR: '1'
+  PYTEST_ADDOPTS: --color=yes
+  RUSTFLAGS: -C debuginfo=line-tables-only
+  RUST_BACKTRACE: '1'
 jobs:
-  lint:
-    timeout-minutes: 45
-    runs-on: "ubuntu-24.04"
+  aws-integtest:
     defaults:
       run:
         shell: bash
         working-directory: python
-    env:
-      # Need up-to-date compilers for kernels
-      CC: clang-18
-      CXX: clang++-18
+    runs-on: ubuntu-latest
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -55,56 +36,212 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.11 # Ray does not support 3.12 yet.
+          python-version: '3.11'
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: python
           prefix-key: ${{ env.CACHE_PREFIX }}
-      - name: Install linting tools
-        run: |
-          pip install ruff==0.11.2 maturin tensorflow tqdm ray[data] pyright datasets polars[pyarrow,pandas]
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - name: Lint Python
-        run: |
-          ruff format --check python
-          ruff check python
-          pyright
+          workspaces: python
+      - uses: ./.github/workflows/build_linux_wheel
       - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y protobuf-compiler libssl-dev
-      - name: Install rustfmt
-        run: rustup component add rustfmt
-      - name: Install clippy
-        run: rustup component add clippy
-      - name: Lint Rust
-        run: |
-          ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | .features | keys | .[]' | grep -v protoc | sort | uniq | paste -s -d "," -`
-          cargo fmt --all -- --check
-          cargo clippy --locked --features ${ALL_FEATURES} --tests -- -D warnings
-      - name: Build
-        run: |
-          python -m venv venv
-          source venv/bin/activate
-          pip install torch tqdm --index-url https://download.pytorch.org/whl/cpu
-          pip install maturin
-          maturin develop --locked --extras tests,ray
-      - name: Run doctest
-        run: |
-          source venv/bin/activate
-          pytest --doctest-modules python/lance
-  linux:
+        run: 'pip install ray[data]
+
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+          '
+      - id: measurement-6
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
+      - uses: ./.github/workflows/run_integtests
+      - name: Delete wheels
+        run: sudo rm -rf target/wheels
+      - id: measurement-9
+        name: Record Measurement After Delete wheels
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Delete wheels
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
     timeout-minutes: 45
-    strategy:
-      matrix:
-        python-minor-version: ["9", "12"]
-    name: "Python Linux 3.${{ matrix.python-minor-version }} x86_64"
-    runs-on: "ubuntu-24.04"
+  lint:
     defaults:
       run:
         shell: bash
         working-directory: python
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    runs-on: ubuntu-24.04
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ env.CACHE_PREFIX }}
+          workspaces: python
+      - name: Install linting tools
+        run: 'pip install ruff==0.11.2 maturin tensorflow tqdm ray[data] pyright datasets
+          polars[pyarrow,pandas]
+
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+          '
+      - id: measurement-5
+        name: Record Measurement After Install linting tools
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install linting tools
+          task: get-measurement
+      - name: Lint Python
+        run: 'ruff format --check python
+
+          ruff check python
+
+          pyright
+
+          '
+      - id: measurement-7
+        name: Record Measurement After Lint Python
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Lint Python
+          task: get-measurement
+      - name: Install dependencies
+        run: 'sudo apt update
+
+          sudo apt install -y protobuf-compiler libssl-dev
+
+          '
+      - id: measurement-9
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
+      - name: Install rustfmt
+        run: rustup component add rustfmt
+      - id: measurement-11
+        name: Record Measurement After Install rustfmt
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install rustfmt
+          task: get-measurement
+      - name: Install clippy
+        run: rustup component add clippy
+      - id: measurement-13
+        name: Record Measurement After Install clippy
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install clippy
+          task: get-measurement
+      - name: Lint Rust
+        run: 'ALL_FEATURES=`cargo metadata --format-version=1 --no-deps | jq -r ''.packages[]
+          | .features | keys | .[]'' | grep -v protoc | sort | uniq | paste -s -d
+          "," -`
+
+          cargo fmt --all -- --check
+
+          cargo clippy --locked --features ${ALL_FEATURES} --tests -- -D warnings
+
+          '
+      - id: measurement-15
+        name: Record Measurement After Lint Rust
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Lint Rust
+          task: get-measurement
+      - name: Build
+        run: 'python -m venv venv
+
+          source venv/bin/activate
+
+          pip install torch tqdm --index-url https://download.pytorch.org/whl/cpu
+
+          pip install maturin
+
+          maturin develop --locked --extras tests,ray
+
+          '
+      - id: measurement-17
+        name: Record Measurement After Build
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Build
+          task: get-measurement
+      - name: Run doctest
+        run: 'source venv/bin/activate
+
+          pytest --doctest-modules python/lance
+
+          '
+      - id: measurement-19
+        name: Record Measurement After Run doctest
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run doctest
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 45
+  linux:
+    defaults:
+      run:
+        shell: bash
+        working-directory: python
+    name: Python Linux 3.${{ matrix.python-minor-version }} x86_64
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -115,35 +252,93 @@ jobs:
           python-version: 3.${{ matrix.python-minor-version }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: python
           prefix-key: ${{ env.CACHE_PREFIX }}
+          workspaces: python
       - uses: ./.github/workflows/build_linux_wheel
       - uses: ./.github/workflows/run_tests
       - name: Generate forward compatibility files
         run: python python/tests/forward_compat/datagen.py
+      - id: measurement-7
+        name: Record Measurement After Generate forward compatibility files
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Generate forward compatibility files
+          task: get-measurement
       - name: Run forward compatibility tests (pylance 0.16.0)
-        run: |
-          python -m venv venv
+        run: 'python -m venv venv
+
           source venv/bin/activate
+
           pip install pytest pylance==0.16.0
+
           pytest python/tests/forward_compat --run-forward
+
+          '
+      - id: measurement-9
+        name: Record Measurement After Run forward compatibility tests (pylance 0.16.0)
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run forward compatibility tests (pylance 0.16.0)
+          task: get-measurement
       - name: Run forward compatibility tests (pylance 0.29.1.beta2)
-        run: |
-          source venv/bin/activate
-          pip install pytest --pre --extra-index-url https://pypi.fury.io/lancedb/ pylance==0.29.1.beta2
+        run: 'source venv/bin/activate
+
+          pip install pytest --pre --extra-index-url https://pypi.fury.io/lancedb/
+          pylance==0.29.1.beta2
+
           pytest python/tests/forward_compat --run-forward
-      # Make sure wheels are not included in the Rust cache
+
+          '
+      - id: measurement-11
+        name: Record Measurement After Run forward compatibility tests (pylance 0.29.1.beta2)
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Run forward compatibility tests (pylance 0.29.1.beta2)
+          task: get-measurement
       - name: Delete wheels
         run: sudo rm -rf target/wheels
-  linux-arm:
+      - id: measurement-13
+        name: Record Measurement After Delete wheels
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Delete wheels
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    strategy:
+      matrix:
+        python-minor-version:
+          - '9'
+          - '12'
     timeout-minutes: 45
-    runs-on: ubuntu-2404-4x-arm64
-    name: Python Linux 3.12 ARM
+  linux-arm:
     defaults:
       run:
         shell: bash
         working-directory: python
+    name: Python Linux 3.12 ARM
+    runs-on: ubuntu-2404-4x-arm64
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -154,29 +349,62 @@ jobs:
           python-version: 3.12
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: python
           prefix-key: ${{ env.CACHE_PREFIX }}
+          workspaces: python
       - uses: ./.github/workflows/build_linux_wheel
         with:
-          arm-build: "true"
-          manylinux: "2_28"
+          arm-build: 'true'
+          manylinux: '2_28'
       - name: Install dependencies
-        run: |
-          sudo apt update -y -qq
+        run: 'sudo apt update -y -qq
+
           sudo apt install -y libhdf5-dev
+
+          '
+      - id: measurement-6
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
       - uses: ./.github/workflows/run_tests
-      # Make sure wheels are not included in the Rust cache
       - name: Delete wheels
         run: sudo rm -rf target/wheels
-  mac:
+      - id: measurement-9
+        name: Record Measurement After Delete wheels
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Delete wheels
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
     timeout-minutes: 45
-    name: Python macOS 3.12 ARM
-    runs-on: "macos-14"
+  mac:
     defaults:
       run:
         shell: bash
         working-directory: python
+    name: Python macOS 3.12 ARM
+    runs-on: macos-14
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -184,62 +412,71 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: python
           prefix-key: ${{ env.CACHE_PREFIX }}
+          workspaces: python
       - uses: ./.github/workflows/build_mac_wheel
       - uses: ./.github/workflows/run_tests
         with:
-          skip-torch: "true"
-      # Make sure wheels are not included in the Rust cache
+          skip-torch: 'true'
       - name: Delete wheels
         run: rm -rf target/wheels
+      - id: measurement-7
+        name: Record Measurement After Delete wheels
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Delete wheels
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 45
   windows:
-    runs-on: windows-latest
-    timeout-minutes: 90
     defaults:
       run:
         shell: powershell
         working-directory: python
+    runs-on: windows-latest
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           lfs: true
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: python
           prefix-key: ${{ env.CACHE_PREFIX }}
+          workspaces: python
       - uses: ./.github/workflows/build_windows_wheel
       - uses: ./.github/workflows/run_tests
-  aws-integtest:
-    timeout-minutes: 45
-    runs-on: "ubuntu-latest"
-    defaults:
-      run:
-        shell: bash
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v4
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
         with:
-          fetch-depth: 0
-          lfs: true
-      - name: Set up Python
-        uses: actions/setup-python@v5
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
         with:
-          python-version: "3.11" # TODO: upgrade when ray supports 3.12
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: python
-          prefix-key: ${{ env.CACHE_PREFIX }}
-      - uses: ./.github/workflows/build_linux_wheel
-      - name: Install dependencies
-        run: |
-          pip install ray[data]
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - uses: ./.github/workflows/run_integtests
-      # Make sure wheels are not included in the Rust cache
-      - name: Delete wheels
-        run: sudo rm -rf target/wheels
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 90

@@ -1,108 +1,116 @@
 name: Create release commit
-
 on:
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Dry run (create the local commit/tags but do not push it)'
-        required: true
-        default: false
-        type: boolean
-      type:
-        description: 'What kind of release is this?'
-        required: true
-        default: 'preview'
-        type: choice
-        options:
-          - preview
-          - stable
-      draft-release:
-        description: 'Create a draft release on GitHub'
-        required: true
-        default: false
-        type: boolean
+  push:
+    branches:
+      - main
 
 jobs:
   bump-version:
     runs-on: ubuntu-latest
     steps:
-    - name: Output Inputs
-      run: echo "${{ toJSON(github.event.inputs) }}"
-    - name: Check out main
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.ref }}
-        persist-credentials: false
-        fetch-depth: 0
-        lfs: true
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.10"
-    
-    - name: Create tag
-      id: create_tag
-      working-directory: rust
-      env:
-        RELEASE_TYPE: ${{ inputs.type }}
-      run: |
-        # Get the current version from cargo metadata
-        CURRENT_VERSION=$(cargo metadata --no-deps --format-version 1 | jq '.packages[0].version' | xargs echo)
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - name: Output Inputs
+        run: echo "${{ toJSON(github.event.inputs) }}"
+      - id: measurement-2
+        name: Record Measurement After Output Inputs
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Output Inputs
+          task: get-measurement
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+          persist-credentials: false
+          ref: ${{ github.ref }}
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - env:
+          RELEASE_TYPE: ${{ inputs.type }}
+        id: create_tag
+        name: Create tag
+        run: "# Get the current version from cargo metadata\nCURRENT_VERSION=$(cargo\
+          \ metadata --no-deps --format-version 1 | jq '.packages[0].version' | xargs\
+          \ echo)\n\nif [ \"$RELEASE_TYPE\" == \"stable\" ]; then\n  echo \"Creating\
+          \ stable release for version $CURRENT_VERSION\"\n  TAG=\"v${CURRENT_VERSION}\"\
+          \nelse\n  # Get a list of all tags, filter for current version beta tags,\
+          \ sort them and get the last one\n  LAST_BETA_TAG=$(git tag | grep \"^v${CURRENT_VERSION}-beta.\"\
+          \ | sort -V | tail -n 1)\n\n  if [ -z \"$LAST_BETA_TAG\" ]; then\n    #\
+          \ If there are no existing beta tags for the current version, start with\
+          \ beta.1\n    NEXT_BETA_TAG=\"v${CURRENT_VERSION}-beta.1\"\n  else\n   \
+          \ # If there are existing beta tags, increment the last beta number to get\
+          \ the next one\n    LAST_BETA_NUMBER=$(echo $LAST_BETA_TAG | sed \"s/v${CURRENT_VERSION}-beta.//\"\
+          )\n    NEXT_BETA_NUMBER=$((LAST_BETA_NUMBER + 1))\n    NEXT_BETA_TAG=\"\
+          v${CURRENT_VERSION}-beta.${NEXT_BETA_NUMBER}\"\n  fi\n\n  echo \"Creating\
+          \ beta release for version $CURRENT_VERSION: $NEXT_BETA_TAG\"\n  TAG=$NEXT_BETA_TAG\n\
+          fi\n\ngit tag $TAG\necho \"tag=$TAG\" >> $GITHUB_OUTPUT\n"
+        working-directory: rust
+      - id: measurement-6
+        name: Record Measurement After Create tag
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Create tag
+          task: get-measurement
+      - if: ${{ !inputs.dry_run }}
+        name: Push new version tag
+        uses: ad-m/github-push-action@master
+        with:
+          branch: ${{ github.ref }}
+          github_token: ${{ secrets.LANCE_RELEASE_TOKEN }}
+          tags: true
+      - if: ${{ !inputs.dry_run }}
+        name: Create GH release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: ${{ inputs.draft-release }}
+          generate_release_notes: true
+          prerelease: ${{ inputs.type == 'preview' }}
+          tag_name: ${{ steps.create_tag.outputs.tag }}
+          token: ${{ secrets.LANCE_RELEASE_TOKEN }}
+      - if: inputs.type == 'stable'
+        name: Call bumpversion
+        uses: ./.github/workflows/bump-version
+        with:
+          part: patch
+      - if: inputs.type == 'stable'
+        name: Commit bump version
+        run: 'git add -u
 
-        if [ "$RELEASE_TYPE" == "stable" ]; then
-          echo "Creating stable release for version $CURRENT_VERSION"
-          TAG="v${CURRENT_VERSION}"
-        else
-          # Get a list of all tags, filter for current version beta tags, sort them and get the last one
-          LAST_BETA_TAG=$(git tag | grep "^v${CURRENT_VERSION}-beta." | sort -V | tail -n 1)
+          git commit -m "Bump version"
 
-          if [ -z "$LAST_BETA_TAG" ]; then
-            # If there are no existing beta tags for the current version, start with beta.1
-            NEXT_BETA_TAG="v${CURRENT_VERSION}-beta.1"
-          else
-            # If there are existing beta tags, increment the last beta number to get the next one
-            LAST_BETA_NUMBER=$(echo $LAST_BETA_TAG | sed "s/v${CURRENT_VERSION}-beta.//")
-            NEXT_BETA_NUMBER=$((LAST_BETA_NUMBER + 1))
-            NEXT_BETA_TAG="v${CURRENT_VERSION}-beta.${NEXT_BETA_NUMBER}"
-          fi
-
-          echo "Creating beta release for version $CURRENT_VERSION: $NEXT_BETA_TAG"
-          TAG=$NEXT_BETA_TAG
-        fi
-
-        git tag $TAG
-        echo "tag=$TAG" >> $GITHUB_OUTPUT
-    - name: Push new version tag
-      if: ${{ !inputs.dry_run }}
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{ secrets.LANCE_RELEASE_TOKEN }}
-        branch: ${{ github.ref }}
-        tags: true
-    - name: Create GH release
-      if: ${{ !inputs.dry_run }}
-      uses: softprops/action-gh-release@v2
-      with:
-        prerelease: ${{ inputs.type == 'preview' }}
-        draft: ${{ inputs.draft-release }}
-        tag_name: ${{ steps.create_tag.outputs.tag }}
-        token: ${{ secrets.LANCE_RELEASE_TOKEN }}
-        generate_release_notes: true
-
-    # Remaining steps only apply to stable releases
-    - name: Call bumpversion
-      uses: ./.github/workflows/bump-version
-      if: inputs.type == 'stable'
-      with:
-        part: patch
-    - name: Commit bump version
-      if: inputs.type == 'stable'
-      run: |
-        git add -u
-        git commit -m "Bump version"
-    - name: Push new version 
-      if: ${{ inputs.type == 'stable' && !inputs.dry_run }}
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{ secrets.LANCE_RELEASE_TOKEN }}
-        branch: ${{ github.ref }}
+          '
+      - id: measurement-11
+        name: Record Measurement After Commit bump version
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Commit bump version
+          task: get-measurement
+      - if: ${{ inputs.type == 'stable' && !inputs.dry_run }}
+        name: Push new version
+        uses: ad-m/github-push-action@master
+        with:
+          branch: ${{ github.ref }}
+          github_token: ${{ secrets.LANCE_RELEASE_TOKEN }}
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json

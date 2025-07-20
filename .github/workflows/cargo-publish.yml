@@ -1,60 +1,75 @@
 name: Publish Rust crate
-
 on:
-  release:
-    # Use released instead of published, since we don't publish preview/beta
-    # versions. Users instead install them from the git repo.
-    types: [released]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to publish (e.g., v1.0.0)"
-        required: true
-        type: string
+  push:
+    branches:
+      - main
 
 env:
-  # This env var is used by Swatinem/rust-cache@v2 for the cache
-  # key, so we set it to make sure it is always consistent.
+  CARGO_INCREMENTAL: '0'
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: "0"
-  RUSTFLAGS: "-C debuginfo=0"
-
+  RUSTFLAGS: -C debuginfo=0
 jobs:
   build:
-    # Needs additional disk space for the full build.
-    runs-on: ubuntu-2404-8x-x64
-    timeout-minutes: 60
-    env:
-      # Need up-to-date compilers for kernels
-      CC: clang-18
-      CXX: clang++-18
     defaults:
       run:
         working-directory: .
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    runs-on: ubuntu-2404-8x-x64
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: Verify and checkout specified tag
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git fetch --all --tags
-          if git rev-parse ${{ github.event.inputs.tag }} >/dev/null 2>&1; then
-            git checkout ${{ github.event.inputs.tag }}
-            echo "Successfully checked out tag ${{ github.event.inputs.tag }}"
-          else
-            echo "Error: Tag ${{ github.event.inputs.tag }} does not exist"
-            echo "Available tags:"
-            git tag -l
-            exit 1
-          fi
+      - if: github.event_name == 'workflow_dispatch'
+        name: Verify and checkout specified tag
+        run: "git fetch --all --tags\nif git rev-parse ${{ github.event.inputs.tag\
+          \ }} >/dev/null 2>&1; then\n  git checkout ${{ github.event.inputs.tag }}\n\
+          \  echo \"Successfully checked out tag ${{ github.event.inputs.tag }}\"\n\
+          else\n  echo \"Error: Tag ${{ github.event.inputs.tag }} does not exist\"\
+          \n  echo \"Available tags:\"\n  git tag -l\n  exit 1\nfi\n"
+      - id: measurement-4
+        name: Record Measurement After Verify and checkout specified tag
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Verify and checkout specified tag
+          task: get-measurement
       - name: Install dependencies
-        run: |
-          sudo apt update
+        run: 'sudo apt update
+
           sudo apt install -y protobuf-compiler libssl-dev
+
+          '
+      - id: measurement-6
+        name: Record Measurement After Install dependencies
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Install dependencies
+          task: get-measurement
       - uses: albertlockett/publish-crates@v2.2
         with:
-          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          args: "--all-features"
+          args: --all-features
           path: .
+          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+    timeout-minutes: 60

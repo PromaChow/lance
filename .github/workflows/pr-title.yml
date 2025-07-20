@@ -1,108 +1,169 @@
 name: PR Checks
-
 on:
-  # This needs to be a pull_request_target event to allow the workflow to
-  # modify labels on the PR.
-  pull_request_target:
-    types: [opened, edited, synchronize, reopened]
+  push:
+    branches:
+      - main
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref
+    }}
 jobs:
-  labeler:
-    permissions:
-      pull-requests: write
-    name: Label PR
-    runs-on: ubuntu-latest
-    steps:
-      - uses: srvaroa/labeler@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          fail_on_error: true
   breaking-change-checker:
     name: Validate breaking change policy
-    runs-on: ubuntu-latest
-    # Make sure we add any labels to this PR first.
     needs: labeler
+    runs-on: ubuntu-latest
     steps:
-      # For security reasons, we check out the base branch to use its CI scripts.
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/checkout@v4
         with:
           path: base
       - uses: actions/checkout@v4
         with:
-          # pull_request_target checks out the base branch by default, not
-          # the PR branch.
-          ref: "${{ github.event.pull_request.head.sha }}"
           path: pr
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
       - run: pip install PyGithub
+      - id: measurement-5
+        name: Record Measurement After Step
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Step
+          task: get-measurement
       - env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        working-directory: pr
         run: python ../base/ci/check_versions.py
+        working-directory: pr
+      - id: measurement-7
+        name: Record Measurement After Step
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Step
+          task: get-measurement
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
   commitlint:
+    name: Verify PR title / description conforms to semantic-release
     permissions:
       pull-requests: write
-    name: Verify PR title / description conforms to semantic-release
     runs-on: ubuntu-latest
     steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-      # These rules are disabled because Github will always ensure there
-      # is a blank line between the title and the body and Github will
-      # word wrap the description field to ensure a reasonable max line
-      # length.
+          node-version: '20'
       - run: npm install @commitlint/config-conventional
-      - run: >
-          echo 'module.exports = {
-            "rules": {
-              "body-max-line-length": [0, "always", Infinity],
-              "footer-max-line-length": [0, "always", Infinity],
-              "body-leading-blank": [0, "always"]
-            }
-          }' > .commitlintrc.js
-      - run: npx commitlint --extends @commitlint/config-conventional --verbose <<< $COMMIT_MSG
-        env:
-          COMMIT_MSG: >
-            ${{ github.event.pull_request.title }}
+      - id: measurement-3
+        name: Record Measurement After Step
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Step
+          task: get-measurement
+      - run: "echo 'module.exports = {\n  \"rules\": {\n    \"body-max-line-length\"\
+          : [0, \"always\", Infinity],\n    \"footer-max-line-length\": [0, \"always\"\
+          , Infinity],\n    \"body-leading-blank\": [0, \"always\"]\n  }\n}' > .commitlintrc.js\n"
+      - id: measurement-5
+        name: Record Measurement After Step
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Step
+          task: get-measurement
+      - env:
+          COMMIT_MSG: '${{ github.event.pull_request.title }}
 
             ${{ github.event.pull_request.body }}
+
+            '
+        run: npx commitlint --extends @commitlint/config-conventional --verbose <<<
+          $COMMIT_MSG
+      - id: measurement-7
+        name: Record Measurement After Step
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          label: Step
+          task: get-measurement
       - if: failure()
         uses: actions/github-script@v7
         with:
-          script: |
-            const message = `**ACTION NEEDED**
-              Lance follows the [Conventional Commits specification](https://www.conventionalcommits.org/en/v1.0.0/) for release automation.
-
-              The PR title and description are used as the merge commit message.\
-              Please update your PR title and description to match the specification.
-
-              For details on the error please inspect the "PR Title Check" action.
-              `
-            // Get list of current comments
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            // Check if this job already commented
-            for (const comment of comments) {
-              if (comment.body === message) {
-                return // Already commented
-              }
-            }
-            // Post the comment about Conventional Commits
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: message
-            })
-            core.setFailed(message)
+          script: "const message = `**ACTION NEEDED**\n  Lance follows the [Conventional\
+            \ Commits specification](https://www.conventionalcommits.org/en/v1.0.0/)\
+            \ for release automation.\n\n  The PR title and description are used as\
+            \ the merge commit message.\\\n  Please update your PR title and description\
+            \ to match the specification.\n\n  For details on the error please inspect\
+            \ the \"PR Title Check\" action.\n  `\n// Get list of current comments\n\
+            const comments = await github.paginate(github.rest.issues.listComments,\
+            \ {\n  owner: context.repo.owner,\n  repo: context.repo.repo,\n  issue_number:\
+            \ context.issue.number\n});\n// Check if this job already commented\n\
+            for (const comment of comments) {\n  if (comment.body === message) {\n\
+            \    return // Already commented\n  }\n}\n// Post the comment about Conventional\
+            \ Commits\ngithub.rest.issues.createComment({\n  owner: context.repo.owner,\n\
+            \  repo: context.repo.repo,\n  issue_number: context.issue.number,\n \
+            \ body: message\n})\ncore.setFailed(message)\n"
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
+  labeler:
+    name: Label PR
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start Energy Measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: start-measurement
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: srvaroa/labeler@master
+        with:
+          fail_on_error: true
+      - id: display-measurement
+        name: Display Energy Results
+        uses: green-coding-solutions/eco-ci-energy-estimation@v4
+        with:
+          json-output: true
+          task: display-results
+      - name: Save Total Energy Consumption Data
+        run: echo '${{ steps.final-measurement.outputs.data-total-json }}' > total_energy_consumption.json
+      - name: Upload Energy Consumption Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-energy-consumption
+          path: total_energy_consumption.json
